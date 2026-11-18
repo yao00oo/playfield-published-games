@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Unity WebGL — hanzo.app</title>
+<meta name="description" content="A real Unity WebGL build running on hanzo.app: cross-origin-isolated (COOP/COEP) so multithreaded WASM gets SharedArrayBuffer, with correct application/wasm MIME on every engine asset.">
+<style>
+  :root { color-scheme: dark }
+  html,body { margin:0; height:100%; background:#0a0d14; color:#e2e8f0; overflow:hidden;
+              font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace }
+  #wrap { position:fixed; inset:0; display:grid; place-items:center }
+  canvas { width:100%; height:100%; display:block; background:#0a0d14 }
+  #hud { position:fixed; left:16px; top:14px; white-space:pre; pointer-events:none;
+         text-shadow:0 1px 3px #000; z-index:2 }
+  #bar { position:fixed; left:50%; top:50%; translate:-50% -50%; width:280px; height:4px;
+         background:#1e293b; border-radius:2px; overflow:hidden; z-index:3 }
+  #bar i { display:block; height:100%; width:0; background:#38bdf8; transition:width .2s }
+  #tag { position:fixed; right:16px; bottom:12px; opacity:.5; z-index:2 }
+</style>
+
+
+</head>
+<body>
+<div id="hud">loading Unity runtime…</div>
+<div id="bar"><i></i></div>
+<div id="wrap"><canvas id="unity-canvas" tabindex="-1"></canvas></div>
+<div id="tag">Unity WebGL · hanzo.app</div>
+<script>
+// Fingerprinted asset names: clients/sites serves a content-hashed filename
+// `immutable`, so a redeploy can never leave a browser running the OLD loader
+// against the NEW wasm — for a WASM app that is a silent permanent hang.
+const BUILD = 'Build/reef-0881644a';
+const hud = document.getElementById('hud');
+const bar = document.querySelector('#bar i');
+// The .jslib this build was compiled against calls back INTO the page:
+// `window.dispatchUnityEvent(name, payload)`. Nothing defined it, so pressing
+// Start Game threw "dispatchUnityEvent is not a function" and the scene never
+// advanced — a demo that rendered, isolated and held 60fps while being
+// unplayable, which no status check can see. Defining it before the loader runs
+// is the whole fix, and it is also the only place the C#-to-page half of the
+// bridge is demonstrated, so the HUD shows what the scene sent.
+window.dispatchUnityEvent = (name, payload) => {
+  hud.textContent = 'unity → page: ' + name + (payload ? ' ' + payload : '');
+};
+const s = document.createElement('script');
+s.src = BUILD + '.loader.js';
+s.onload = () => createUnityInstance(document.getElementById('unity-canvas'), {
+  dataUrl: BUILD + '.data',
+  frameworkUrl: BUILD + '.framework.js',
+  codeUrl: BUILD + '.wasm',
+  cacheControl: () => 'no-store',
+  streamingAssetsUrl: 'StreamingAssets',
+  companyName: 'Hanzo', productName: 'Unity WebGL Template', productVersion: '1.0',
+}, (p) => { bar.style.width = (100 * p) + '%'; }).then(() => {
+  document.getElementById('bar').remove();
+  hud.textContent = 'Unity WebGL · crossOriginIsolated=' + self.crossOriginIsolated +
+    ' · SharedArrayBuffer=' + (typeof SharedArrayBuffer !== 'undefined');
+}).catch((m) => { hud.textContent = 'Unity failed to start: ' + m; });
+document.body.appendChild(s);
+</script>
+</body>
+</html>
