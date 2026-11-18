@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>星光搬运 · 游场联机适配示例</title>
+  <style>
+    :root{color-scheme:dark}body{margin:0;background:#081423;color:#f7f2dd;font:16px system-ui,sans-serif;min-height:100dvh;display:grid;place-items:center}
+    main{width:min(92vw,570px);padding:24px;background:#12233a;border:1px solid #37506b;border-radius:18px;box-shadow:0 20px 70px #020812}
+    h1{margin:0;font-size:28px;color:#e8ff9e}p{line-height:1.5;color:#bdd0df}#scene{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin:20px 0}
+    .tile{aspect-ratio:1;background:#1c3650;border:1px solid #3d5b70;border-radius:9px;display:grid;place-items:center;font-size:24px;position:relative}
+    .star{color:#f5de66}.me{background:#b9f34d;color:#14240f}.other{background:#78b8ef;color:#10243b}
+    .avatar{width:29px;height:29px;border-radius:9px;display:grid;place-items:center;font-weight:800}.avatar+.avatar{position:absolute;right:4px;bottom:4px;transform:scale(.72)}
+    #status{min-height:24px;color:#b9f34d;font-weight:700}#controls{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    .arrows{display:grid;grid-template-columns:repeat(3,48px);grid-template-rows:repeat(2,44px);gap:5px}.arrows button:nth-child(1){grid-column:2}.arrows button:nth-child(2){grid-column:1}.arrows button:nth-child(3){grid-column:2}.arrows button:nth-child(4){grid-column:3}
+    button{border:0;border-radius:8px;background:#d3e9ef;color:#14233a;font:700 19px system-ui;cursor:pointer}button:hover{background:#b9f34d}#restart{padding:12px 16px;font-size:14px}
+  </style>
+</head>
+<body><main data-playfield-game data-playfield-state="playing"><h1>星光搬运</h1><p>一起在夜空格子里收集 5 颗星。方向键或按钮移动；同一个房间的玩家会看到彼此和共享进度。</p><div id="status" role="status"></div><div id="scene" data-playfield-scene></div><div id="controls"><div class="arrows"><button data-move="up" aria-label="上移">↑</button><button data-move="left" aria-label="左移">←</button><button data-move="down" aria-label="下移">↓</button><button data-move="right" aria-label="右移">→</button></div><button id="restart">重新开始</button></div></main>
+<script>
+const spots=[6,18,4,20,12],size=5;
+const initial=()=>({players:{},stars:[...spots],score:0,won:false});
+let state=initial(),myId='solo',hostId=null,connected=false,peers=[];
+const root=document.querySelector('[data-playfield-game]'),scene=document.querySelector('#scene'),status=document.querySelector('#status');
+function render(){
+  scene.innerHTML='';
+  for(let cell=0;cell<size*size;cell++){
+    const tile=document.createElement('div');tile.className='tile';
+    if(state.stars.includes(cell)){tile.classList.add('star');tile.textContent='✦'}
+    for(const [id,position] of Object.entries(state.players)){
+      if(position!==cell)continue;
+      const avatar=document.createElement('span');avatar.className='avatar '+(id===myId?'me':'other');avatar.textContent=id===myId?'你':'友';
+      tile.append(avatar);
+    }
+    scene.append(tile);
+  }
+  status.textContent=(connected?('已联机 · '+peers.length+' 人 · '+(myId===hostId?'你是房主':'房主同步中')):'单人试玩')+' · 星光 '+state.score+'/5'+(state.won?' · 全员获胜！':'');
+  root.dataset.playfieldState=state.won?'won':'playing-'+state.score+'-'+(state.players[myId]??0);
+}
+function reduce(playerId,action){
+  if(action.kind==='restart'){state=initial();for(const id of peers.length?peers:[myId])state.players[id]=0;return}
+  if(state.won||!['up','down','left','right'].includes(action.move))return;
+  const pos=state.players[playerId]??0,x=pos%size,y=Math.floor(pos/size);
+  const nx=Math.max(0,Math.min(size-1,x+(action.move==='left'?-1:action.move==='right'?1:0)));
+  const ny=Math.max(0,Math.min(size-1,y+(action.move==='up'?-1:action.move==='down'?1:0)));
+  const next=ny*size+nx;state.players[playerId]=next;
+  const star=state.stars.indexOf(next);
+  if(star>=0){state.stars.splice(star,1);state.score++;state.won=state.score>=5}
+}
+function send(action){
+  if(connected)window.parent.postMessage({type:'playfield-room',event:'action',payload:action},'*');
+  else{reduce(myId,action);render()}
+}
+document.querySelectorAll('[data-move]').forEach(button=>button.onclick=()=>send({move:button.dataset.move}));
+document.querySelector('#restart').onclick=()=>send({kind:'restart'});
+window.addEventListener('keydown',event=>{const move=({ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right'})[event.key];if(move){event.preventDefault();send({move})}});
+window.addEventListener('message',event=>{
+  if(event.source!==window.parent||event.data?.type!=='playfield-room')return;
+  const data=event.data;
+  if(data.event==='welcome'){
+    connected=true;myId=data.playerId;hostId=data.hostId;peers=data.peers;
+    state=data.snapshot||initial();
+    if(myId===hostId){for(const id of peers)state.players[id]??=0;window.parent.postMessage({type:'playfield-room',event:'state',state},'*')}
+    render();
+  }else if(data.event==='presence'){
+    hostId=data.hostId;peers=data.peers;
+    if(myId===hostId){for(const id of peers)state.players[id]??=0;for(const id of Object.keys(state.players))if(!peers.includes(id))delete state.players[id];window.parent.postMessage({type:'playfield-room',event:'state',state},'*')}
+    render();
+  }else if(data.event==='action'&&myId===hostId){reduce(data.playerId,data.payload);window.parent.postMessage({type:'playfield-room',event:'state',state},'*')}
+  else if(data.event==='state'){state=data.state;render()}
+  else if(data.event==='disconnected'){connected=false;peers=[];render()}
+});
+state.players.solo=0;render();
+</script></body></html>
